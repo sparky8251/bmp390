@@ -5,8 +5,14 @@ use embedded_hal::delay::DelayUs;
 
 pub mod i2c;
 
-#[derive(Copy, Clone)]
+pub struct BMP390Measurement {
+    pub temp: f32,
+    pub press: f32
+}
+
+#[derive(Default, Copy, Clone)]
 pub enum PowerMode {
+    #[default]
     Sleep,
     Forced,
     Normal,
@@ -15,16 +21,27 @@ pub enum PowerMode {
 impl From<PowerMode> for u8 {
     fn from(value: PowerMode) -> Self {
         match value {
-            PowerMode::Sleep => 0x0,
-            PowerMode::Forced => 0x1,
-            PowerMode::Normal => 0x3,
+            PowerMode::Sleep => 0b00,
+            PowerMode::Forced => 0b01,
+            PowerMode::Normal => 0b11,
         }
     }
 }
 
-impl Default for PowerMode {
-    fn default() -> Self {
-        PowerMode::Sleep
+#[derive(Default, Copy, Clone)]
+pub struct PowerConfig {
+    pub pressure_enable: bool,
+    pub temperature_enable: bool,
+    pub power_mode: PowerMode,
+}
+
+impl PowerConfig {
+    pub fn to_u8(&self) -> u8 {
+        (((self.power_mode as u8) << 4) | self.temperature_enable as u8) << 1
+            | self.pressure_enable as u8
+    }
+    pub fn from_u8(_power_config: u8) -> Self {
+        todo!()
     }
 }
 
@@ -52,8 +69,8 @@ impl From<Oversampling> for u8 {
 }
 
 pub struct OsrConfig {
-    pressure: Oversampling,
-    temperature: Oversampling,
+    pub pressure: Oversampling,
+    pub temperature: Oversampling,
 }
 
 impl Default for OsrConfig {
@@ -77,8 +94,8 @@ impl OsrConfig {
 
 #[derive(Default)]
 pub struct Bmp390Config {
-    osr_config: OsrConfig,
-    power_mode: PowerMode,
+    pub osr_config: OsrConfig,
+    pub power_config: PowerConfig,
 }
 
 pub const BMP390_CHIP_ID_REGISTER: u8 = 0x0;
@@ -119,6 +136,46 @@ pub const BMP390_CONFIG_REGISTER: u8 = 0x1F;
 
 // TODO: calibration data registers from 0x30 to 0x57
 
+const BMP390_COMPENSATION_REGISTERS: usize = 21;
+
+struct CompensationData {
+    t1: u16,
+    t2: u16,
+    t3: i8,
+    p1: i16,
+    p2: i16,
+    p3: i8,
+    p4: i8,
+    p5: u16,
+    p6: u16,
+    p7: i8,
+    p8: i8,
+    p9: i16,
+    p10: i8,
+    p11: i8,
+}
+
+impl From<[u8; BMP390_COMPENSATION_REGISTERS]> for CompensationData {
+    fn from(value: [u8; BMP390_COMPENSATION_REGISTERS]) -> Self {
+        CompensationData {
+            t1: ((value[0] as u16) << 8) | value[1] as u16,
+            t2: ((value[2] as u16) << 8) | value[3] as u16,
+            t3: value[4] as i8,
+            p1: ((value[5] as i16) << 8) | value[6] as i16,
+            p2: ((value[7] as i16) << 8) | value[8] as i16,
+            p3: value[9] as i8,
+            p4: value[10] as i8,
+            p5: ((value[11] as u16) << 8) | value[12] as u16,
+            p6: ((value[13] as u16) << 8) | value[14] as u16,
+            p7: value[15] as i8,
+            p8: value[16] as i8,
+            p9: ((value[17] as i16) << 8) | value[18] as i16,
+            p10: value[19] as i8,
+            p11: value[20] as i8,
+        }
+    }
+}
+
 pub const BMP390_CMD_REGISTER: u8 = 0x7E;
 
 const BMP390_P_T_DATA_LEN: usize = 8;
@@ -131,6 +188,12 @@ trait Interface {
     fn read_data(&mut self, register: u8) -> Result<[u8; BMP390_P_T_DATA_LEN], Self::Error>;
 
     fn write_register(&mut self, register: u8, payload: u8) -> Result<(), Self::Error>;
+
+    fn read_compensation_data(&mut self) -> Result<CompensationData, Self::Error>;
+
+    fn read_raw_pressure_data(&mut self) -> Result<u32, Self::Error>;
+
+    fn read_raw_temperature_data(&mut self) -> Result<u32, Self::Error>;
 }
 
 struct BMP390Common<I> {
@@ -142,14 +205,18 @@ impl<I> BMP390Common<I>
 where
     I: Interface,
 {
-    fn init<D: DelayUs>(&mut self, delay: &mut D, config: Option<Bmp390Config>) -> Result<(), I::Error> {
+    fn init<D: DelayUs>(
+        &mut self,
+        delay: &mut D,
+        config: Option<Bmp390Config>,
+    ) -> Result<(), I::Error> {
         self.soft_reset(delay)?;
         let chip_id = self.read_chip_id()?;
         let rev_id = self.read_revision_id()?;
         println!("Chip ID and Rev is ID: {}, Rev: {}", chip_id, rev_id);
         match config {
-            Some(v) => self.set_config(v)?,
-            None => self.set_config(Bmp390Config::default())?,
+            Some(v) => self.set_all_configs(&v)?,
+            None => self.set_all_configs(&Bmp390Config::default())?,
         }
         Ok(())
     }
@@ -162,15 +229,37 @@ where
         self.interface.read_register(BMP390_REV_ID_REGISTER)
     }
 
-    fn set_config(&mut self, config: Bmp390Config) -> Result<(), I::Error> {
-        self.interface
-            .write_register(BMP390_OSR_REGISTER, config.osr_config.to_u8())?;
-        Ok(())
-    }
-
     fn soft_reset<D: DelayUs>(&mut self, delay: &mut D) -> Result<(), I::Error> {
         self.interface.write_register(BMP390_CMD_REGISTER, 0xB6)?;
         delay.delay_ms(4); // Double the documented reboot time, just to be extra sure its done
         Ok(())
+    }
+
+    fn set_all_configs(&mut self, config: &Bmp390Config) -> Result<(), I::Error> {
+        self.set_osr_config(&config.osr_config)?;
+        self.set_power_config(&config.power_config)?;
+        Ok(())
+    }
+
+    fn set_osr_config(&mut self, osr_config: &OsrConfig) -> Result<(), I::Error> {
+        self.interface
+            .write_register(BMP390_OSR_REGISTER, osr_config.to_u8())
+    }
+
+    fn set_power_config(&mut self, power_config: &PowerConfig) -> Result<(), I::Error> {
+        self.interface
+            .write_register(BMP390_PWR_CTRL_REGISTER, power_config.to_u8())
+    }
+
+    fn read_raw_pressure_data(&mut self) -> Result<u32, I::Error> {
+        self.interface.read_raw_pressure_data()
+    }
+
+    fn read_raw_temperature_data(&mut self) -> Result<u32, I::Error> {
+        self.interface.read_raw_temperature_data()
+    }
+
+    fn read_compensation_data(&mut self) -> Result<CompensationData, I::Error> {
+        self.interface.read_compensation_data()
     }
 }
