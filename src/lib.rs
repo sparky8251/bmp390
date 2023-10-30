@@ -2,12 +2,13 @@
 
 use defmt::println;
 use embedded_hal::delay::DelayUs;
+use libm::exp2f;
 
 pub mod i2c;
 
 pub struct BMP390Measurement {
     pub temp: f32,
-    pub press: f32
+    pub press: f32,
 }
 
 #[derive(Default, Copy, Clone)]
@@ -139,39 +140,39 @@ pub const BMP390_CONFIG_REGISTER: u8 = 0x1F;
 const BMP390_COMPENSATION_REGISTERS: usize = 21;
 
 struct CompensationData {
-    t1: u16,
-    t2: u16,
-    t3: i8,
-    p1: i16,
-    p2: i16,
-    p3: i8,
-    p4: i8,
-    p5: u16,
-    p6: u16,
-    p7: i8,
-    p8: i8,
-    p9: i16,
-    p10: i8,
-    p11: i8,
+    t1: f32,
+    t2: f32,
+    t3: f32,
+    p1: f32,
+    p2: f32,
+    p3: f32,
+    p4: f32,
+    p5: f32,
+    p6: f32,
+    p7: f32,
+    p8: f32,
+    p9: f32,
+    p10: f32,
+    p11: f32,
 }
 
 impl From<[u8; BMP390_COMPENSATION_REGISTERS]> for CompensationData {
     fn from(value: [u8; BMP390_COMPENSATION_REGISTERS]) -> Self {
         CompensationData {
-            t1: ((value[0] as u16) << 8) | value[1] as u16,
-            t2: ((value[2] as u16) << 8) | value[3] as u16,
-            t3: value[4] as i8,
-            p1: ((value[5] as i16) << 8) | value[6] as i16,
-            p2: ((value[7] as i16) << 8) | value[8] as i16,
-            p3: value[9] as i8,
-            p4: value[10] as i8,
-            p5: ((value[11] as u16) << 8) | value[12] as u16,
-            p6: ((value[13] as u16) << 8) | value[14] as u16,
-            p7: value[15] as i8,
-            p8: value[16] as i8,
-            p9: ((value[17] as i16) << 8) | value[18] as i16,
-            p10: value[19] as i8,
-            p11: value[20] as i8,
+            t1: f32::from(u16::from_le_bytes([value[0], value[1]])) / exp2f(-8.0),
+            t2: f32::from(u16::from_le_bytes([value[2], value[3]])) / exp2f(30.0),
+            t3: f32::from(i8::from_le_bytes([value[4]])) / exp2f(48.0),
+            p1: f32::from(i16::from_le_bytes([value[5], value[6]])) / exp2f(20.0),
+            p2: f32::from(i16::from_le_bytes([value[7], value[8]])) / exp2f(29.0),
+            p3: f32::from(i8::from_le_bytes([value[9]])) / exp2f(32.0),
+            p4: f32::from(i8::from_le_bytes([value[10]])) / exp2f(37.0),
+            p5: f32::from(u16::from_le_bytes([value[11], value[12]])) / exp2f(-3.0),
+            p6: f32::from(u16::from_le_bytes([value[13], value[14]])) / exp2f(6.0),
+            p7: f32::from(i8::from_le_bytes([value[15]])) / exp2f(8.0),
+            p8: f32::from(i8::from_le_bytes([value[16]])) / exp2f(15.0),
+            p9: f32::from(i16::from_le_bytes([value[17], value[18]])) / exp2f(48.0),
+            p10: f32::from(i8::from_le_bytes([value[19]])) / exp2f(48.0),
+            p11: f32::from(i8::from_le_bytes([value[20]])) / exp2f(65.0),
         }
     }
 }

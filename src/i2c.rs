@@ -2,7 +2,12 @@ use embedded_hal::delay::DelayUs;
 use embedded_hal::i2c::ErrorType;
 use embedded_hal::i2c::I2c;
 
-use super::{BMP390Common, Bmp390Config, CompensationData, Interface, OsrConfig, PowerConfig, BMP390_LSB_PRESSURE_REGISTER, BMP390_LSB_TEMPERATURE_REGISTER, BMP390_MSB_PRESSURE_REGISTER, BMP390_MSB_TEMPERATURE_REGISTER, BMP390_P_T_DATA_LEN, BMP390_XLSB_PRESSURE_REGISTER, BMP390_XLSB_TEMPERATURE_REGISTER, BMP390Measurement, BMP390_COMPENSATION_REGISTERS};
+use super::{
+    BMP390Common, BMP390Measurement, Bmp390Config, CompensationData, Interface, OsrConfig,
+    PowerConfig, BMP390_COMPENSATION_REGISTERS, BMP390_LSB_PRESSURE_REGISTER,
+    BMP390_LSB_TEMPERATURE_REGISTER, BMP390_MSB_PRESSURE_REGISTER, BMP390_MSB_TEMPERATURE_REGISTER,
+    BMP390_P_T_DATA_LEN, BMP390_XLSB_PRESSURE_REGISTER, BMP390_XLSB_TEMPERATURE_REGISTER,
+};
 
 #[derive(Copy, Clone)]
 enum Bmp390Address {
@@ -126,20 +131,25 @@ where
         self.common.set_power_config(power_config)
     }
 
-    fn compensate_temperature(&self, raw_temperature: u32, compensation_data: &CompensationData) -> f32 {
+    fn compensate_temperature(
+        &self,
+        raw_temperature: u32,
+        compensation_data: &CompensationData,
+    ) -> f32 {
         let comp_temp: f32;
 
         let partial_data1: f32;
         let partial_data2: f32;
 
-        partial_data1 = (raw_temperature - u32::from(compensation_data.t1)) as f32;
-        partial_data2 = partial_data1 * compensation_data.t2 as f32;
-        comp_temp = partial_data2 + (partial_data1 * partial_data1) * compensation_data.t3 as f32;
+        partial_data1 = raw_temperature as f32 - compensation_data.t1;
+        partial_data2 = partial_data1 * compensation_data.t2;
+        comp_temp = partial_data2 + (partial_data1 * partial_data1) * compensation_data.t3;
 
         comp_temp
     }
 
-    fn compensate_pressure(&self,
+    fn compensate_pressure(
+        &self,
         raw_pressure: u32,
         compensated_temperature: f32,
         compensation_data: &CompensationData,
@@ -153,28 +163,25 @@ where
         let partial_out1: f32;
         let partial_out2: f32;
 
-        partial_data1 = compensation_data.p6 as f32 * compensated_temperature;
-        partial_data2 =
-            compensation_data.p7 as f32 * (compensated_temperature * compensated_temperature);
-        partial_data3 = compensation_data.p8 as f32
+        partial_data1 = compensation_data.p6 * compensated_temperature;
+        partial_data2 = compensation_data.p7 * (compensated_temperature * compensated_temperature);
+        partial_data3 = compensation_data.p8
             * (compensated_temperature * compensated_temperature * compensated_temperature);
-        partial_out1 = compensation_data.p5 as f32 + partial_data1 + partial_data2 + partial_data3;
+        partial_out1 = compensation_data.p5 + partial_data1 + partial_data2 + partial_data3;
 
-        partial_data1 = compensation_data.p2 as f32 * compensated_temperature;
-        partial_data2 =
-            compensation_data.p3 as f32 * (compensated_temperature * compensated_temperature);
-        partial_data3 = compensation_data.p4 as f32
+        partial_data1 = compensation_data.p2 * compensated_temperature;
+        partial_data2 = compensation_data.p3 * (compensated_temperature * compensated_temperature);
+        partial_data3 = compensation_data.p4
             * (compensated_temperature * compensated_temperature * compensated_temperature);
         partial_out2 = raw_pressure as f32
-            * (compensation_data.p1 as f32 + partial_data1 + partial_data2 + partial_data3);
+            * (compensation_data.p1 + partial_data1 + partial_data2 + partial_data3);
 
         partial_data1 = raw_pressure as f32 * raw_pressure as f32;
-        partial_data2 =
-            compensation_data.p9 as f32 + compensation_data.p10 as f32 * compensated_temperature;
+        partial_data2 = compensation_data.p9 + compensation_data.p10 * compensated_temperature;
         partial_data3 = partial_data1 + partial_data2;
         partial_data4 = partial_data3
             + (raw_pressure as f32 * raw_pressure as f32 * raw_pressure as f32)
-            * compensation_data.p11 as f32;
+                * compensation_data.p11;
 
         comp_press = partial_out1 + partial_out2 + partial_data4;
 
@@ -186,8 +193,10 @@ where
         let raw_pressure = self.common.read_raw_pressure_data()?;
         let compensation_data = self.common.read_compensation_data()?;
 
-        let compensated_temperature = self.compensate_temperature(raw_temperature, &compensation_data);
-        let compensated_pressure = self.compensate_pressure(raw_pressure, compensated_temperature, &compensation_data);
+        let compensated_temperature =
+            self.compensate_temperature(raw_temperature, &compensation_data);
+        let compensated_pressure =
+            self.compensate_pressure(raw_pressure, compensated_temperature, &compensation_data);
 
         Ok(BMP390Measurement {
             temp: compensated_temperature,
