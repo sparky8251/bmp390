@@ -1,27 +1,85 @@
 #![no_std]
 
-use defmt::{debug, info};
+use defmt::println;
 use embedded_hal::delay::DelayUs;
 
 pub mod i2c;
 
-pub const BMP390_SLEEP_MODE: u8 = 0x0;
-pub const BMP390_FORCED_MODE: u8 = 0x1;
-pub const BMP390_NORMAL_MODE: u8 = 0x3;
+#[derive(Copy, Clone)]
+pub enum PowerMode {
+    Sleep,
+    Forced,
+    Normal,
+}
 
-pub const BMP390_PRESSURE_OVERSAMPLING_X1: u8 = 0x1;
-pub const BMP390_PRESSURE_OVERSAMPLING_X2: u8 = 0x2;
-pub const BMP390_PRESSURE_OVERSAMPLING_X4: u8 = 0x3;
-pub const BMP390_PRESSURE_OVERSAMPLING_X8: u8 = 0x4;
-pub const BMP390_PRESSURE_OVERSAMPLING_X16: u8 = 0x5;
-pub const BMP390_PRESSURE_OVERSAMPLING_X32: u8 = 0x6;
+impl From<PowerMode> for u8 {
+    fn from(value: PowerMode) -> Self {
+        match value {
+            PowerMode::Sleep => 0x0,
+            PowerMode::Forced => 0x1,
+            PowerMode::Normal => 0x3,
+        }
+    }
+}
 
-pub const BMP390_TEMPERATURE_OVERSAMPLING_X1: u8 = 0x1;
-pub const BMP390_TEMPERATURE_OVERSAMPLING_X2: u8 = 0x2;
-pub const BMP390_TEMPERATURE_OVERSAMPLING_X4: u8 = 0x3;
-pub const BMP390_TEMPERATURE_OVERSAMPLING_X8: u8 = 0x4;
-pub const BMP390_TEMPERATURE_OVERSAMPLING_X16: u8 = 0x5;
-pub const BMP390_TEMPERATURE_OVERSAMPLING_X32: u8 = 0x6;
+impl Default for PowerMode {
+    fn default() -> Self {
+        PowerMode::Sleep
+    }
+}
+
+#[derive(Copy, Clone)]
+pub enum Oversampling {
+    X1,
+    X2,
+    X4,
+    X8,
+    X16,
+    X32,
+}
+
+impl From<Oversampling> for u8 {
+    fn from(value: Oversampling) -> Self {
+        match value {
+            Oversampling::X1 => 0b000,
+            Oversampling::X2 => 0b001,
+            Oversampling::X4 => 0b010,
+            Oversampling::X8 => 0b011,
+            Oversampling::X16 => 0b100,
+            Oversampling::X32 => 0b101,
+        }
+    }
+}
+
+pub struct OsrConfig {
+    pressure: Oversampling,
+    temperature: Oversampling,
+}
+
+impl Default for OsrConfig {
+    fn default() -> Self {
+        Self {
+            pressure: Oversampling::X4,
+            temperature: Oversampling::X1,
+        }
+    }
+}
+
+impl OsrConfig {
+    pub fn to_u8(&self) -> u8 {
+        ((self.temperature as u8) << 3) | self.pressure as u8
+    }
+
+    pub fn from_u8(_osr_config: u8) -> Self {
+        todo!()
+    }
+}
+
+#[derive(Default)]
+pub struct Bmp390Config {
+    osr_config: OsrConfig,
+    power_mode: PowerMode,
+}
 
 pub const BMP390_CHIP_ID_REGISTER: u8 = 0x0;
 pub const BMP390_REV_ID_REGISTER: u8 = 0x1;
@@ -55,6 +113,7 @@ pub const BMP390_INT_CTRL_REGISTER: u8 = 0x19;
 pub const BMP390_IF_CONF_REGISTER: u8 = 0x1A;
 pub const BMP390_PWR_CTRL_REGISTER: u8 = 0x1B;
 pub const BMP390_OSR_REGISTER: u8 = 0x1C;
+
 pub const BMP390_ODR_REGISTER: u8 = 0x1D;
 pub const BMP390_CONFIG_REGISTER: u8 = 0x1F;
 
@@ -62,14 +121,14 @@ pub const BMP390_CONFIG_REGISTER: u8 = 0x1F;
 
 pub const BMP390_CMD_REGISTER: u8 = 0x7E;
 
-const BME280_P_T_H_DATA_LEN: usize = 8;
+const BMP390_P_T_DATA_LEN: usize = 8;
 
 trait Interface {
     type Error;
 
     fn read_register(&mut self, register: u8) -> Result<u8, Self::Error>;
 
-    fn read_data(&mut self, register: u8) -> Result<[u8; BME280_P_T_H_DATA_LEN], Self::Error>;
+    fn read_data(&mut self, register: u8) -> Result<[u8; BMP390_P_T_DATA_LEN], Self::Error>;
 
     fn write_register(&mut self, register: u8, payload: u8) -> Result<(), Self::Error>;
 }
@@ -83,23 +142,35 @@ impl<I> BMP390Common<I>
 where
     I: Interface,
 {
-    fn init<D: DelayUs>(&mut self, _delay: &mut D) -> Result<(), I::Error> {
-        if let Err(e) = self.verify_chip_id() {
-            info!("Failed in init function");
-            return Err(e);
-        };
+    fn init<D: DelayUs>(&mut self, delay: &mut D, config: Option<Bmp390Config>) -> Result<(), I::Error> {
+        self.soft_reset(delay)?;
+        let chip_id = self.read_chip_id()?;
+        let rev_id = self.read_revision_id()?;
+        println!("Chip ID and Rev is ID: {}, Rev: {}", chip_id, rev_id);
+        match config {
+            Some(v) => self.set_config(v)?,
+            None => self.set_config(Bmp390Config::default())?,
+        }
         Ok(())
     }
 
-    fn verify_chip_id(&mut self) -> Result<(), I::Error> {
-        let chip_id = match self.interface.read_register(BMP390_CHIP_ID_REGISTER) {
-            Ok(v) => v,
-            Err(e) => {
-                info!("Failed in verify chip id function");
-                return Err(e);
-            }
-        };
-        debug!("Chip ID is {:x}", chip_id);
+    fn read_chip_id(&mut self) -> Result<u8, I::Error> {
+        self.interface.read_register(BMP390_CHIP_ID_REGISTER)
+    }
+
+    fn read_revision_id(&mut self) -> Result<u8, I::Error> {
+        self.interface.read_register(BMP390_REV_ID_REGISTER)
+    }
+
+    fn set_config(&mut self, config: Bmp390Config) -> Result<(), I::Error> {
+        self.interface
+            .write_register(BMP390_OSR_REGISTER, config.osr_config.to_u8())?;
+        Ok(())
+    }
+
+    fn soft_reset<D: DelayUs>(&mut self, delay: &mut D) -> Result<(), I::Error> {
+        self.interface.write_register(BMP390_CMD_REGISTER, 0xB6)?;
+        delay.delay_ms(4); // Double the documented reboot time, just to be extra sure its done
         Ok(())
     }
 }
