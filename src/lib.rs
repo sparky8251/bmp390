@@ -104,13 +104,13 @@ pub const BMP390_REV_ID_REGISTER: u8 = 0x1;
 pub const BMP390_ERR_REGISTER: u8 = 0x2;
 pub const BMP390_STATUS_REGISTER: u8 = 0x3;
 
-pub const BMP390_MSB_PRESSURE_REGISTER: u8 = 0x4;
+pub const BMP390_XLSB_PRESSURE_REGISTER: u8 = 0x4;
 pub const BMP390_LSB_PRESSURE_REGISTER: u8 = 0x5;
-pub const BMP390_XLSB_PRESSURE_REGISTER: u8 = 0x6;
+pub const BMP390_MSB_PRESSURE_REGISTER: u8 = 0x6;
 
-pub const BMP390_MSB_TEMPERATURE_REGISTER: u8 = 0x7;
+pub const BMP390_XLSB_TEMPERATURE_REGISTER: u8 = 0x7;
 pub const BMP390_LSB_TEMPERATURE_REGISTER: u8 = 0x8;
-pub const BMP390_XLSB_TEMPERATURE_REGISTER: u8 = 0x9;
+pub const BMP390_MSB_TEMPERATURE_REGISTER: u8 = 0x9;
 
 pub const BMP390_SENSOR_TIME_2_REGISTER: u8 = 0xC;
 pub const BMP390_SENSOR_TIME_1_REGISTER: u8 = 0xD;
@@ -119,11 +119,11 @@ pub const BMP390_SENSOR_TIME_0_REGISTER: u8 = 0xE;
 pub const BMP390_EVENT_REGISTER: u8 = 0x10;
 pub const BMP390_INT_STATUS_REGISTER: u8 = 0x11;
 
-pub const BMP390_FIFO_LENGTH_MSB_REGISTER: u8 = 0x12;
-pub const BMP390_FIFO_LENGTH_LSB_REGISTER: u8 = 0x13;
+pub const BMP390_FIFO_LENGTH_LSB_REGISTER: u8 = 0x12;
+pub const BMP390_FIFO_LENGTH_MSB_REGISTER: u8 = 0x13;
 pub const BMP390_FIFO_DATA_REGISTER: u8 = 0x14;
-pub const BMP390_FIFO_WATERMARK_MSB_REGISTER: u8 = 0x15;
-pub const BMP390_FIFO_WATERMARK_LSB_REGISTER: u8 = 0x16;
+pub const BMP390_FIFO_WATERMARK_LSB_REGISTER: u8 = 0x15;
+pub const BMP390_FIFO_WATERMARK_MSB_REGISTER: u8 = 0x16;
 pub const BMP390_FIFO_CONFIG_1_REGISTER: u8 = 0x17;
 pub const BMP390_FIFO_CONFIG_2_REGISTER: u8 = 0x18;
 
@@ -199,7 +199,6 @@ trait Interface {
 
 struct BMP390Common<I> {
     interface: I,
-    //calibration: Option<CalibrationData>
 }
 
 impl<I> BMP390Common<I>
@@ -263,4 +262,78 @@ where
     fn read_compensation_data(&mut self) -> Result<CompensationData, I::Error> {
         self.interface.read_compensation_data()
     }
+
+    fn compensate_temperature(
+        &self,
+        raw_temperature: u32,
+        compensation_data: &CompensationData,
+    ) -> f32 {
+        let comp_temp: f32;
+
+        let partial_data1: f32;
+        let partial_data2: f32;
+
+        partial_data1 = raw_temperature as f32 - compensation_data.t1;
+        partial_data2 = partial_data1 * compensation_data.t2;
+        comp_temp = partial_data2 + (partial_data1 * partial_data1) * compensation_data.t3;
+
+        comp_temp
+    }
+
+    fn compensate_pressure(
+        &self,
+        raw_pressure: u32,
+        compensated_temperature: f32,
+        compensation_data: &CompensationData,
+    ) -> f32 {
+        let comp_press: f32;
+
+        let mut partial_data1: f32;
+        let mut partial_data2: f32;
+        let mut partial_data3: f32;
+        let partial_data4: f32;
+        let partial_out1: f32;
+        let partial_out2: f32;
+
+        partial_data1 = compensation_data.p6 * compensated_temperature;
+        partial_data2 = compensation_data.p7 * (compensated_temperature * compensated_temperature);
+        partial_data3 = compensation_data.p8
+            * (compensated_temperature * compensated_temperature * compensated_temperature);
+        partial_out1 = compensation_data.p5 + partial_data1 + partial_data2 + partial_data3;
+
+        partial_data1 = compensation_data.p2 * compensated_temperature;
+        partial_data2 = compensation_data.p3 * (compensated_temperature * compensated_temperature);
+        partial_data3 = compensation_data.p4
+            * (compensated_temperature * compensated_temperature * compensated_temperature);
+        partial_out2 = raw_pressure as f32
+            * (compensation_data.p1 + partial_data1 + partial_data2 + partial_data3);
+
+        partial_data1 = raw_pressure as f32 * raw_pressure as f32;
+        partial_data2 = compensation_data.p9 + compensation_data.p10 * compensated_temperature;
+        partial_data3 = partial_data1 + partial_data2;
+        partial_data4 = partial_data3
+            + (raw_pressure as f32 * raw_pressure as f32 * raw_pressure as f32)
+            * compensation_data.p11;
+
+        comp_press = partial_out1 + partial_out2 + partial_data4;
+
+        comp_press
+    }
+
+    fn take_measurement(&mut self) -> Result<BMP390Measurement, I::Error> {
+        let raw_temperature = self.read_raw_temperature_data()?;
+        let raw_pressure = self.read_raw_pressure_data()?;
+        let compensation_data = self.read_compensation_data()?;
+
+        let compensated_temperature =
+            self.compensate_temperature(raw_temperature, &compensation_data);
+        let compensated_pressure =
+            self.compensate_pressure(raw_pressure, compensated_temperature, &compensation_data);
+
+        Ok(BMP390Measurement {
+            temp: compensated_temperature,
+            press: compensated_pressure,
+        })
+    }
+
 }
