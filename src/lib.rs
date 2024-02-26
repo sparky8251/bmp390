@@ -7,7 +7,9 @@ use libm::exp2f;
 pub mod i2c;
 
 pub struct BMP390Measurement {
+    /// in celsius
     pub temp: f32,
+    /// in pascals
     pub press: f32,
 }
 
@@ -162,8 +164,8 @@ impl From<[u8; BMP390_COMPENSATION_REGISTERS]> for CompensationData {
             t1: f32::from(u16::from_le_bytes([value[0], value[1]])) / exp2f(-8.0),
             t2: f32::from(u16::from_le_bytes([value[2], value[3]])) / exp2f(30.0),
             t3: f32::from(i8::from_le_bytes([value[4]])) / exp2f(48.0),
-            p1: f32::from(i16::from_le_bytes([value[5], value[6]])) / exp2f(20.0),
-            p2: f32::from(i16::from_le_bytes([value[7], value[8]])) / exp2f(29.0),
+            p1: (f32::from(i16::from_le_bytes([value[5], value[6]])) - exp2f(14.0)) / exp2f(20.0),
+            p2: (f32::from(i16::from_le_bytes([value[7], value[8]])) - exp2f(14.0)) / exp2f(29.0),
             p3: f32::from(i8::from_le_bytes([value[9]])) / exp2f(32.0),
             p4: f32::from(i8::from_le_bytes([value[10]])) / exp2f(37.0),
             p5: f32::from(u16::from_le_bytes([value[11], value[12]])) / exp2f(-3.0),
@@ -213,7 +215,7 @@ where
         self.soft_reset(delay)?;
         let chip_id = self.read_chip_id()?;
         let rev_id = self.read_revision_id()?;
-        println!("Chip ID and Rev is ID: {}, Rev: {}", chip_id, rev_id);
+        println!("Chip ID and Rev is ID: {:x}, Rev: {:x}", chip_id, rev_id);
         match config {
             Some(v) => self.set_all_configs(&v)?,
             None => self.set_all_configs(&Bmp390Config::default())?,
@@ -310,9 +312,9 @@ where
 
         partial_data1 = raw_pressure as f32 * raw_pressure as f32;
         partial_data2 = compensation_data.p9 + compensation_data.p10 * compensated_temperature;
-        partial_data3 = partial_data1 + partial_data2;
+        partial_data3 = partial_data1 * partial_data2;
         partial_data4 = partial_data3
-            + (raw_pressure as f32 * raw_pressure as f32 * raw_pressure as f32)
+            + (raw_pressure as f32 * raw_pressure as f32 * raw_pressure as f32 )
             * compensation_data.p11;
 
         comp_press = partial_out1 + partial_out2 + partial_data4;

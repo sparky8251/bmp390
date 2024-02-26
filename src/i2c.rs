@@ -1,3 +1,4 @@
+use defmt::println;
 use embedded_hal::delay::DelayUs;
 use embedded_hal::i2c::ErrorType;
 use embedded_hal::i2c::I2c;
@@ -66,14 +67,18 @@ where
         let msb = self.read_register(BMP390_MSB_PRESSURE_REGISTER)?;
         let lsb = self.read_register(BMP390_LSB_PRESSURE_REGISTER)?;
         let xlsb = self.read_register(BMP390_XLSB_PRESSURE_REGISTER)?;
-        Ok(u32::from_be_bytes([0,msb,lsb,xlsb]))
+        let uncompensated_pressure = u32::from_be_bytes([0,msb,lsb,xlsb]);
+        println!("Uncompensated Pressure: {:b}", uncompensated_pressure);
+        Ok(uncompensated_pressure)
     }
 
     fn read_raw_temperature_data(&mut self) -> Result<u32, Self::Error> {
         let msb = self.read_register(BMP390_MSB_TEMPERATURE_REGISTER)?;
         let lsb = self.read_register(BMP390_LSB_TEMPERATURE_REGISTER)?;
         let xlsb = self.read_register(BMP390_XLSB_TEMPERATURE_REGISTER)?;
-        Ok(u32::from_be_bytes([0,msb,lsb,xlsb]))
+        let uncompensated_temperature = u32::from_be_bytes([0,msb,lsb,xlsb]);
+        println!("Uncompensated Temperature: {:b}", uncompensated_temperature);
+        Ok(uncompensated_temperature)
     }
 }
 
