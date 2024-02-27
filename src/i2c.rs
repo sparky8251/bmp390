@@ -1,5 +1,4 @@
-use defmt::println;
-use embedded_hal::delay::DelayUs;
+use embedded_hal::delay::DelayNs;
 use embedded_hal::i2c::ErrorType;
 use embedded_hal::i2c::I2c;
 
@@ -70,7 +69,6 @@ where
         let lsb = self.read_register(BMP390_LSB_PRESSURE_REGISTER)?;
         let xlsb = self.read_register(BMP390_XLSB_PRESSURE_REGISTER)?;
         let uncompensated_pressure = u32::from_be_bytes([0,msb,lsb,xlsb]);
-        println!("Uncompensated Pressure: {:b}", uncompensated_pressure);
         Ok(uncompensated_pressure)
     }
 
@@ -79,7 +77,6 @@ where
         let lsb = self.read_register(BMP390_LSB_TEMPERATURE_REGISTER)?;
         let xlsb = self.read_register(BMP390_XLSB_TEMPERATURE_REGISTER)?;
         let uncompensated_temperature = u32::from_be_bytes([0,msb,lsb,xlsb]);
-        println!("Uncompensated Temperature: {:b}", uncompensated_temperature);
         Ok(uncompensated_temperature)
     }
 }
@@ -108,7 +105,7 @@ where
         Self::new(i2c, Bmp390Address::Secondary)
     }
 
-    pub fn init<D: DelayUs>(
+    pub fn init<D: DelayNs>(
         &mut self,
         delay: &mut D,
         config: Option<Bmp390Config>,
@@ -116,7 +113,7 @@ where
         self.common.init(delay, config)
     }
 
-    pub fn soft_reset<D: DelayUs>(&mut self, delay: &mut D) -> Result<(), I2C::Error> {
+    pub fn soft_reset<D: DelayNs>(&mut self, delay: &mut D) -> Result<(), I2C::Error> {
         self.common.soft_reset(delay)
     }
 

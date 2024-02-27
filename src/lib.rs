@@ -1,6 +1,6 @@
 #![no_std]
 
-use embedded_hal::delay::DelayUs;
+use embedded_hal::delay::DelayNs;
 use libm::exp2f;
 
 pub mod i2c;
@@ -210,7 +210,7 @@ impl<I> BMP390Common<I>
 where
     I: Interface,
 {
-    fn init<D: DelayUs>(
+    fn init<D: DelayNs>(
         &mut self,
         delay: &mut D,
         config: Option<Bmp390Config>,
@@ -236,7 +236,7 @@ where
         self.interface.read_register(BMP390_REV_ID_REGISTER)
     }
 
-    fn soft_reset<D: DelayUs>(&mut self, delay: &mut D) -> Result<(), I::Error> {
+    fn soft_reset<D: DelayNs>(&mut self, delay: &mut D) -> Result<(), I::Error> {
         self.interface.write_register(BMP390_CMD_REGISTER, 0xB6)?;
         delay.delay_ms(4); // Double the documented reboot time, just to be extra sure its done
         Ok(())
