@@ -1,6 +1,5 @@
 #![no_std]
 
-use defmt::println;
 use embedded_hal::delay::DelayUs;
 use libm::exp2f;
 
@@ -202,6 +201,10 @@ trait Interface {
 struct BMP390Common<I> {
     interface: I,
 }
+pub struct BMP390ID {
+    pub chip_id: u8,
+    pub rev_id: u8
+}
 
 impl<I> BMP390Common<I>
 where
@@ -211,16 +214,18 @@ where
         &mut self,
         delay: &mut D,
         config: Option<Bmp390Config>,
-    ) -> Result<(), I::Error> {
+    ) -> Result<BMP390ID, I::Error> {
         self.soft_reset(delay)?;
         let chip_id = self.read_chip_id()?;
         let rev_id = self.read_revision_id()?;
-        println!("Chip ID and Rev is ID: {:x}, Rev: {:x}", chip_id, rev_id);
         match config {
             Some(v) => self.set_all_configs(&v)?,
             None => self.set_all_configs(&Bmp390Config::default())?,
         }
-        Ok(())
+        Ok(BMP390ID {
+            chip_id,
+            rev_id
+        })
     }
 
     fn read_chip_id(&mut self) -> Result<u8, I::Error> {

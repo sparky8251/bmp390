@@ -3,6 +3,8 @@ use embedded_hal::delay::DelayUs;
 use embedded_hal::i2c::ErrorType;
 use embedded_hal::i2c::I2c;
 
+use crate::BMP390ID;
+
 use super::{
     BMP390Common, BMP390Measurement, Bmp390Config, CompensationData, Interface, OsrConfig,
     PowerConfig, BMP390_COMPENSATION_REGISTERS, BMP390_LSB_PRESSURE_REGISTER,
@@ -110,7 +112,7 @@ where
         &mut self,
         delay: &mut D,
         config: Option<Bmp390Config>,
-    ) -> Result<(), I2C::Error> {
+    ) -> Result<BMP390ID, I2C::Error> {
         self.common.init(delay, config)
     }
 
